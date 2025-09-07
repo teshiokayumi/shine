@@ -152,7 +152,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "データベースエラーが発生しました" }, { status: 500 })
     }
 
-    const shrines = csvData || []
+    const allowedShrines = ["櫛田神社", "警固神社", "光雲神社", "住吉神社"]
+    const filteredShrines = (csvData || []).filter((shrine) =>
+      allowedShrines.some((allowed) => shrine.shrine_name?.includes(allowed)),
+    )
+
+    const shrines = filteredShrines
 
     const { data: spotsData } = await supabase.from("tourist_spots").select("spot_name, address, description")
 
@@ -161,34 +166,29 @@ export async function POST(request: NextRequest) {
     try {
       const nearbyShines = await selectNearbyShines(shrines, userLocation)
 
-      const shrineData = nearbyShines
-        .map((shrine) => {
-          const name = shrine.shrine_name || "名称不明"
-          const address = shrine.address || ""
-          const benefits = [shrine.benefit_tag_1, shrine.benefit_tag_2].filter(Boolean).join("、") || ""
-          const attribute = shrine.tag_attribute || ""
-          const otherBenefits = shrine.other_benefits || ""
+      const shrineJsonData = nearbyShines.map((shrine) => ({
+        name: shrine.shrine_name || "名称不明",
+        address: shrine.address || "",
+        benefit_tag_1: shrine.benefit_tag_1 || "",
+        benefit_tag_2: shrine.benefit_tag_2 || "",
+        tag_attribute: shrine.tag_attribute || "",
+        other_benefits: shrine.other_benefits || "",
+        distance:
+          shrine.distance && shrine.distance !== Number.POSITIVE_INFINITY ? `${shrine.distance.toFixed(1)}km` : "",
+      }))
 
-          return `- ${name}${address ? ` (${address})` : ""}${shrine.distance && shrine.distance !== Number.POSITIVE_INFINITY ? ` [距離: ${shrine.distance.toFixed(1)}km]` : ""}
-  ${benefits ? `御利益: ${benefits}` : ""}
-  ${attribute ? `特徴: ${attribute}` : ""}
-  ${otherBenefits ? `御祭神: ${otherBenefits}` : ""}`
-        })
-        .join("\n\n")
-
-      const spotData = touristSpots
-        .map(
-          (spot) =>
-            `- ${spot.spot_name || "名称不明"}${spot.address ? ` (${spot.address})` : ""}: ${spot.description || ""}`,
-        )
-        .join("\n")
+      const touristSpotJsonData = touristSpots.map((spot) => ({
+        name: spot.spot_name || "名称不明",
+        address: spot.address || "",
+        description: spot.description || "",
+      }))
 
       if (!process.env.GEMINI_API_KEY) {
         console.log("[v0] GEMINI_API_KEY not found, using fallback")
         throw new Error("Gemini API key not configured")
       }
 
-      console.log("[v0] Calling Gemini API with shrine data:", shrineData.substring(0, 200) + "...")
+      console.log("[v0] Calling Gemini API with JSON data")
 
       const geminiResponse = await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" +
@@ -203,27 +203,22 @@ export async function POST(request: NextRequest) {
               {
                 parts: [
                   {
-                    text: `あなたは福岡市の魅力的な神社・観光ガイドAIです。以下のデータベースを参考に、地理的に常識的で自然な観光案内をしてください。
+                    text: `以下のJSONに福岡市内の神社データがあります。このJSONに含まれる神社だけを、人間向けにわかりやすく紹介してください。追加の神社は絶対に出さないでください。
 
-神社データベース（最適化されたルート順）:
-${shrineData}
+神社データ: ${JSON.stringify(shrineJsonData)}
 
-観光地データベース:
-${spotData}
+観光地データ: ${JSON.stringify(touristSpotJsonData)}
 
 ユーザーの質問: "${userMessage}"
 ${userLocation ? `ユーザーの希望エリア: ${userLocation}` : ""}
 
-重要な指針：
-1. 提示された神社は既に最適なルートで並んでいるので、この順序で巡ることを推奨する
+以下の指針に従って回答してください：
+1. JSONデータに含まれる神社のみを紹介する（追加の神社は絶対に出さない）
 2. 「大濠公園から光雲神社へ行き、黒田家の繁栄を感じて警固公園へ行かれませんか？」のような自然で魅力的な提案をする
-3. 移動距離と時間を考慮した現実的なルートを提案する（距離情報を参考に）
-4. 福岡の歴史や文化、周辺の観光スポットも織り交ぜる
-5. 3つの神社を順序通りに巡る魅力と、それぞれの特徴を具体的に提案する
-6. 移動手段（徒歩、地下鉄、バス）や所要時間も含める
-7. 親しみやすく、ワクワクするような表現を使う
-8. データベースにない情報は推測せず、実際のデータのみを使用する
-9. 最適化された距離情報を活用して、効率的で現実的なルートを提案する
+3. 距離情報を活用して効率的なルートを提案する
+4. 福岡の歴史や文化を織り交ぜた親しみやすい表現を使う
+5. 移動手段や所要時間も含める
+6. データにない情報は推測せず、実際のデータのみを使用する
 
 地理的に最適化されたルートで、実際に巡りやすい三社詣りを提案してください。`,
                   },
