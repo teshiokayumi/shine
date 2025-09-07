@@ -152,9 +152,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "データベースエラーが発生しました" }, { status: 500 })
     }
 
-    const allowedShrines = ["櫛田神社", "警固神社", "光雲神社", "住吉神社"]
+    const allowedShrines = [
+      { name: "櫛田神社", district: "博多区" },
+      { name: "警固神社", district: "中央区" },
+      { name: "光雲神社", district: "中央区" },
+      { name: "住吉神社", district: "博多区" },
+    ]
+
     const filteredShrines = (csvData || []).filter((shrine) =>
-      allowedShrines.some((allowed) => shrine.shrine_name?.includes(allowed)),
+      allowedShrines.some(
+        (allowed) => shrine.shrine_name?.includes(allowed.name) && shrine.address?.includes(allowed.district),
+      ),
     )
 
     const shrines = filteredShrines
@@ -203,7 +211,7 @@ export async function POST(request: NextRequest) {
               {
                 parts: [
                   {
-                    text: `以下のJSONに福岡市内の神社データがあります。このJSONに含まれる神社だけを、人間向けにわかりやすく紹介してください。追加の神社は絶対に出さないでください。
+                    text: `以下のJSONに福岡市内の神社データがあります。本日は博多区櫛田神社、中央区警固神社、中央区光雲神社、博多区住吉神社の4社のみを案内してください。これら以外の神社は絶対に紹介しないでください。
 
 神社データ: ${JSON.stringify(shrineJsonData)}
 
@@ -213,12 +221,13 @@ export async function POST(request: NextRequest) {
 ${userLocation ? `ユーザーの希望エリア: ${userLocation}` : ""}
 
 以下の指針に従って回答してください：
-1. JSONデータに含まれる神社のみを紹介する（追加の神社は絶対に出さない）
-2. 「大濠公園から光雲神社へ行き、黒田家の繁栄を感じて警固公園へ行かれませんか？」のような自然で魅力的な提案をする
-3. 距離情報を活用して効率的なルートを提案する
-4. 福岡の歴史や文化を織り交ぜた親しみやすい表現を使う
-5. 移動手段や所要時間も含める
-6. データにない情報は推測せず、実際のデータのみを使用する
+1. 本日は博多区櫛田神社、中央区警固神社、中央区光雲神社、博多区住吉神社の4社のみを案内する
+2. これら以外の神社は絶対に紹介しない
+3. 「大濠公園から光雲神社へ行き、黒田家の繁栄を感じて警固公園へ行かれませんか？」のような自然で魅力的な提案をする
+4. 距離情報を活用して効率的なルートを提案する
+5. 福岡の歴史や文化を織り交ぜた親しみやすい表現を使う
+6. 移動手段や所要時間も含める
+7. データにない情報は推測せず、実際のデータのみを使用する
 
 地理的に最適化されたルートで、実際に巡りやすい三社詣りを提案してください。`,
                   },
