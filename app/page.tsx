@@ -20,9 +20,8 @@ export default function HomePage() {
 
   useEffect(() => {
     const bannerImages = [
-      "https://idhxfowbqbazjrabyums.supabase.co/storage/v1/object/public/images/miko1.png",
-      "https://idhxfowbqbazjrabyums.supabase.co/storage/v1/object/public/images/miko2.png",
-      "https://idhxfowbqbazjrabyums.supabase.co/storage/v1/object/public/images/miko3.png",
+      "https://www.asahi-net.or.jp/~mi7k-hmd/miko1.png",
+      "https://www.asahi-net.or.jp/~mi7k-hmd/miko3.png",
     ]
     const selectedBanner = bannerImages[Math.floor(Math.random() * bannerImages.length)]
     setRandomBanner(selectedBanner)
@@ -129,7 +128,7 @@ export default function HomePage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-6">
                   <img
-                    src="https://idhxfowbqbazjrabyums.supabase.co/storage/v1/object/public/images/_con.png"
+                    src="https://www.asahi-net.or.jp/~mi7k-hmd/_con.png"
                     alt="執事アイコン"
                     className="w-16 h-16 object-contain"
                   />

@@ -56,7 +56,7 @@ export default function ConciergePage() {
     if (!audioPlayed) {
       const playAudio = async () => {
         try {
-          const audio = new Audio("https://idhxfowbqbazjrabyums.supabase.co/storage/v1/object/public/audio/sansha.wav")
+          const audio = new Audio("https://www.asahi-net.or.jp/~mi7k-hmd/sansha.wav")
           audio.volume = 0.7 // 音量を少し下げる
           await audio.play()
           console.log("[v0] 音声再生成功")
@@ -304,7 +304,7 @@ ${shrines
       <div className="max-w-2xl mx-auto">
         <div className="text-center mb-8">
           <img
-            src="https://idhxfowbqbazjrabyums.supabase.co/storage/v1/object/public/images/_con.png"
+            src="https://www.asahi-net.or.jp/~mi7k-hmd/_con.png"
             alt="執事アイコン"
             className="w-[100px] h-[100px] object-contain mx-auto mb-4"
           />
