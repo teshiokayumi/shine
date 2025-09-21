@@ -40,54 +40,54 @@ async function getCoordinates(address: string) {
   return null
 }
 
-function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number) {
-  return haversine(lat1, lng1, lat2, lng2) / 1000 // convert meters to kilometers
-}
-
-async function optimizeThreeShrineRoute(shrines: any[], userLocation?: string) {
+async function optimizeRouteWithSpots(spots: any[], userLocation?: string) {
   if (!userLocation) {
-    return shrines.slice(0, 3)
+    return spots.slice(0, 3)
   }
 
   const userCoords = await getCoordinates(userLocation)
   if (!userCoords) {
-    return shrines.slice(0, 3)
+    return spots.slice(0, 3)
   }
 
-  // 各神社の座標を取得
-  const shrinesWithCoords = await Promise.all(
-    shrines.map(async (shrine) => {
-      const coords = await getCoordinates(shrine.address || "")
-      if (coords) {
-        const distance = haversine(userCoords.lat, userCoords.lng, coords.lat, coords.lng) / 1000
-        return { ...shrine, distance, coordinates: coords }
+  // 緯度経度が既にある場合はそれを使用、ない場合はジオコーディング
+  const spotsWithCoords = await Promise.all(
+    spots.map(async (spot) => {
+      let coords = null
+      let distance = Number.POSITIVE_INFINITY
+
+      if (spot.latitude && spot.longitude) {
+        coords = { lat: Number.parseFloat(spot.latitude), lng: Number.parseFloat(spot.longitude) }
+        distance = haversine(userCoords.lat, userCoords.lng, coords.lat, coords.lng) / 1000
+      } else if (spot.address) {
+        coords = await getCoordinates(spot.address)
+        if (coords) {
+          distance = haversine(userCoords.lat, userCoords.lng, coords.lat, coords.lng) / 1000
+        }
       }
-      return { ...shrine, distance: Number.POSITIVE_INFINITY }
+
+      return { ...spot, distance, coordinates: coords }
     }),
   )
 
-  // 有効な座標を持つ神社のみをフィルタ
-  const validShrines = shrinesWithCoords.filter(
-    (shrine) => shrine.coordinates && shrine.distance !== Number.POSITIVE_INFINITY,
-  )
+  // 有効な座標を持つスポットのみをフィルタ
+  const validSpots = spotsWithCoords.filter((spot) => spot.coordinates && spot.distance !== Number.POSITIVE_INFINITY)
 
-  if (validShrines.length < 3) {
-    return validShrines.concat(shrinesWithCoords.filter((s) => !s.coordinates).slice(0, 3 - validShrines.length))
+  if (validSpots.length < 3) {
+    return validSpots.concat(spotsWithCoords.filter((s) => !s.coordinates).slice(0, 3 - validSpots.length))
   }
 
-  // 最適な3神社ルートを計算（総移動距離を最小化）
-  let bestRoute = validShrines.slice(0, 3)
+  // 最適な3スポットルートを計算（総移動距離を最小化）
+  let bestRoute = validSpots.slice(0, 3)
   let bestTotalDistance = Number.POSITIVE_INFINITY
 
-  // 上位6つの神社から最適な3つの組み合わせを選択
-  const candidates = validShrines.slice(0, Math.min(6, validShrines.length))
+  const candidates = validSpots.slice(0, Math.min(6, validSpots.length))
 
   for (let i = 0; i < candidates.length - 2; i++) {
     for (let j = i + 1; j < candidates.length - 1; j++) {
       for (let k = j + 1; k < candidates.length; k++) {
         const route = [candidates[i], candidates[j], candidates[k]]
 
-        // ユーザー位置から最初の神社 + 神社間の距離 + 最後の神社からユーザー位置
         const totalDistance =
           route[0].distance +
           haversine(
@@ -116,25 +116,6 @@ async function optimizeThreeShrineRoute(shrines: any[], userLocation?: string) {
   return bestRoute
 }
 
-async function selectNearbyShines(shrines: any[], userLocation?: string) {
-  return await optimizeThreeShrineRoute(shrines, userLocation)
-}
-
-function formatShrineInfo(shrine: any) {
-  const info = {
-    name: shrine.name || "",
-    address: shrine.address || "",
-    deity: shrine.deity || "",
-    benefits: shrine.benefits || "",
-    description: shrine.description || "",
-    hours: shrine.hours || "",
-    phone: shrine.phone || "",
-  }
-
-  // null値や空文字列を除外
-  return Object.fromEntries(Object.entries(info).filter(([_, value]) => value && value.trim() !== ""))
-}
-
 export async function POST(request: NextRequest) {
   try {
     const { messages } = await request.json()
@@ -143,14 +124,20 @@ export async function POST(request: NextRequest) {
     const locationKeywords = ["博多", "天神", "中央区", "博多区", "早良区", "東区", "西区", "南区", "城南区"]
     const userLocation = locationKeywords.find((keyword) => userMessage.includes(keyword))
 
-    const { data: csvData, error } = await supabase
-      .from("shrines") // テーブル名を入力
-      .select("shrine_name, address, benefit_tag_1, benefit_tag_2, tag_attribute, other_benefits")
+    const { data: spotsData, error: spotsError } = await supabase
+      .from("spots")
+      .select(
+        "spotid, shrine_name, address, benefit_tag_1, benefit_tag_2, tag_attribute, other_benefits, latitude, longitude, category",
+      )
 
-    if (error) {
-      console.error("Database error:", error)
+    if (spotsError) {
+      console.error("Spots database error:", spotsError)
       return NextResponse.json({ error: "データベースエラーが発生しました" }, { status: 500 })
     }
+
+    const { data: coursesData } = await supabase.from("courses").select("course_id, name, description, theme")
+
+    const { data: courseSpotsData } = await supabase.from("course_spots").select("course_id, spot_id, order")
 
     const allowedShrines = [
       { name: "櫛田神社", district: "博多区" },
@@ -159,36 +146,53 @@ export async function POST(request: NextRequest) {
       { name: "住吉神社", district: "博多区" },
     ]
 
-    const filteredShrines = (csvData || []).filter((shrine) =>
-      allowedShrines.some(
-        (allowed) => shrine.shrine_name?.includes(allowed.name) && shrine.address?.includes(allowed.district),
-      ),
+    const shrineSpots = (spotsData || []).filter(
+      (spot) =>
+        spot.category === "神社" ||
+        allowedShrines.some(
+          (allowed) => spot.shrine_name?.includes(allowed.name) && spot.address?.includes(allowed.district),
+        ),
     )
 
-    const shrines = filteredShrines
-
-    const { data: spotsData } = await supabase.from("tourist_spots").select("spot_name, address, description")
-
-    const touristSpots = spotsData || []
+    const touristSpots = (spotsData || []).filter((spot) => spot.category && spot.category !== "神社")
 
     try {
-      const nearbyShines = await selectNearbyShines(shrines, userLocation)
+      const nearbyShines = await optimizeRouteWithSpots(shrineSpots, userLocation)
 
-      const shrineJsonData = nearbyShines.map((shrine) => ({
-        name: shrine.shrine_name || "名称不明",
-        address: shrine.address || "",
-        benefit_tag_1: shrine.benefit_tag_1 || "",
-        benefit_tag_2: shrine.benefit_tag_2 || "",
-        tag_attribute: shrine.tag_attribute || "",
-        other_benefits: shrine.other_benefits || "",
-        distance:
-          shrine.distance && shrine.distance !== Number.POSITIVE_INFINITY ? `${shrine.distance.toFixed(1)}km` : "",
+      const relevantCourses = (coursesData || []).filter(
+        (course) =>
+          userMessage.includes(course.theme) ||
+          userMessage.includes(course.name) ||
+          course.theme?.includes("神社") ||
+          course.theme?.includes("観光"),
+      )
+
+      const shrineJsonData = nearbyShines.map((spot) => ({
+        name: spot.shrine_name || "名称不明",
+        address: spot.address || "",
+        benefit_tag_1: spot.benefit_tag_1 || "",
+        benefit_tag_2: spot.benefit_tag_2 || "",
+        tag_attribute: spot.tag_attribute || "",
+        other_benefits: spot.other_benefits || "",
+        latitude: spot.latitude || "",
+        longitude: spot.longitude || "",
+        distance: spot.distance && spot.distance !== Number.POSITIVE_INFINITY ? `${spot.distance.toFixed(1)}km` : "",
       }))
 
-      const touristSpotJsonData = touristSpots.map((spot) => ({
-        name: spot.spot_name || "名称不明",
+      const touristSpotJsonData = touristSpots.slice(0, 10).map((spot) => ({
+        name: spot.shrine_name || "名称不明",
         address: spot.address || "",
-        description: spot.description || "",
+        description: spot.other_benefits || "",
+        category: spot.category || "",
+        latitude: spot.latitude || "",
+        longitude: spot.longitude || "",
+      }))
+
+      const courseJsonData = relevantCourses.map((course) => ({
+        id: course.course_id,
+        name: course.name,
+        description: course.description,
+        theme: course.theme,
       }))
 
       if (!process.env.GEMINI_API_KEY) {
@@ -196,7 +200,7 @@ export async function POST(request: NextRequest) {
         throw new Error("Gemini API key not configured")
       }
 
-      console.log("[v0] Calling Gemini API with JSON data")
+      console.log("[v0] Calling Gemini API with enhanced data structure")
 
       const geminiResponse = await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" +
@@ -211,25 +215,29 @@ export async function POST(request: NextRequest) {
               {
                 parts: [
                   {
-                    text: `以下のJSONに福岡市内の神社データがあります。本日は博多区櫛田神社、中央区警固神社、中央区光雲神社、博多区住吉神社の4社のみを案内してください。これら以外の神社は絶対に紹介しないでください。
+                    text: `あなたは福岡市の神社めぐりと観光案内の専門コンシェルジュです。以下のデータを参考に、ユーザーの質問に対して魅力的で実用的な案内をしてください。
 
-神社データ: ${JSON.stringify(shrineJsonData)}
+神社データ（本日案内可能な4社のみ）: ${JSON.stringify(shrineJsonData)}
 
 観光地データ: ${JSON.stringify(touristSpotJsonData)}
+
+おすすめコース: ${JSON.stringify(courseJsonData)}
 
 ユーザーの質問: "${userMessage}"
 ${userLocation ? `ユーザーの希望エリア: ${userLocation}` : ""}
 
-以下の指針に従って回答してください：
+【重要な指針】
 1. 本日は博多区櫛田神社、中央区警固神社、中央区光雲神社、博多区住吉神社の4社のみを案内する
 2. これら以外の神社は絶対に紹介しない
 3. 「大濠公園から光雲神社へ行き、黒田家の繁栄を感じて警固公園へ行かれませんか？」のような自然で魅力的な提案をする
-4. 距離情報を活用して効率的なルートを提案する
-5. 福岡の歴史や文化を織り交ぜた親しみやすい表現を使う
-6. 移動手段や所要時間も含める
-7. データにない情報は推測せず、実際のデータのみを使用する
+4. 緯度経度データを活用して地理的に効率的なルートを提案する
+5. 神社だけでなく、周辺の観光地も組み合わせた総合的な福岡観光プランを提案する
+6. 移動手段（徒歩、地下鉄、バス）と所要時間も含める
+7. 福岡の歴史や文化的背景を織り交ぜた親しみやすい表現を使う
+8. データにない情報は推測せず、実際のデータのみを使用する
+9. ユーザーの質問内容に応じて、願い事だけでなく観光、グルメ、歴史など幅広く対応する
 
-地理的に最適化されたルートで、実際に巡りやすい三社詣りを提案してください。`,
+地理的に最適化されたルートで、神社めぐりと観光を組み合わせた特別な福岡体験を提案してください。`,
                   },
                 ],
               },
@@ -262,12 +270,12 @@ ${userLocation ? `ユーザーの希望エリア: ${userLocation}` : ""}
       console.error("[v0] Gemini API error:", geminiError)
     }
 
-    console.log("[v0] Using fallback response")
+    console.log("[v0] Using enhanced fallback response")
     const userMessageLower = userMessage.toLowerCase()
-    let recommendedShrines = []
+    let recommendedSpots = []
 
     if (userMessageLower.includes("恋愛") || userMessageLower.includes("結婚") || userMessageLower.includes("縁結び")) {
-      recommendedShrines = shrines.filter(
+      recommendedSpots = shrineSpots.filter(
         (s) =>
           s.benefit_tag_1?.includes("縁結び") ||
           s.benefit_tag_2?.includes("縁結び") ||
@@ -279,66 +287,36 @@ ${userLocation ? `ユーザーの希望エリア: ${userLocation}` : ""}
       userMessageLower.includes("就職") ||
       userMessageLower.includes("商売")
     ) {
-      recommendedShrines = shrines.filter(
+      recommendedSpots = shrineSpots.filter(
         (s) =>
           s.benefit_tag_1?.includes("商売繁盛") ||
           s.benefit_tag_2?.includes("商売繁盛") ||
           s.benefit_tag_1?.includes("必勝") ||
           s.benefit_tag_2?.includes("必勝"),
       )
-    } else if (userMessageLower.includes("健康") || userMessageLower.includes("病気")) {
-      recommendedShrines = shrines.filter(
-        (s) =>
-          s.benefit_tag_1?.includes("健康") ||
-          s.benefit_tag_2?.includes("健康") ||
-          s.benefit_tag_1?.includes("厄除け") ||
-          s.benefit_tag_2?.includes("厄除け"),
-      )
-    } else if (
-      userMessageLower.includes("学業") ||
-      userMessageLower.includes("受験") ||
-      userMessageLower.includes("合格")
-    ) {
-      recommendedShrines = shrines.filter(
-        (s) =>
-          s.benefit_tag_1?.includes("学問") ||
-          s.benefit_tag_2?.includes("学問") ||
-          s.benefit_tag_1?.includes("合格") ||
-          s.benefit_tag_2?.includes("合格"),
-      )
     } else {
-      recommendedShrines = shrines.slice(0, 3)
+      recommendedSpots = shrineSpots.slice(0, 3)
     }
 
-    const selectedShrines = await selectNearbyShines(
-      recommendedShrines.length > 0 ? recommendedShrines : shrines,
+    const selectedSpots = await optimizeRouteWithSpots(
+      recommendedSpots.length > 0 ? recommendedSpots : shrineSpots,
       userLocation,
     )
 
-    const shrineDescriptions = selectedShrines
-      .map((shrine, index) => {
-        const name = shrine.shrine_name || "名称不明"
-        const address = shrine.address || ""
-        const benefits = [shrine.benefit_tag_1, shrine.benefit_tag_2].filter(Boolean).join("、") || ""
+    const spotDescriptions = selectedSpots
+      .map((spot, index) => {
+        const name = spot.shrine_name || "名称不明"
+        const address = spot.address || ""
+        const benefits = [spot.benefit_tag_1, spot.benefit_tag_2].filter(Boolean).join("、") || ""
         const orderWords = ["まず", "次に", "そして"]
         const distanceInfo =
-          shrine.distance && shrine.distance !== Number.POSITIVE_INFINITY ? `（約${shrine.distance.toFixed(1)}km）` : ""
+          spot.distance && spot.distance !== Number.POSITIVE_INFINITY ? `（約${spot.distance.toFixed(1)}km）` : ""
 
-        return `${orderWords[index] || "最後に"}、${name}${distanceInfo}へ足を向けてみませんか。${address ? `${address}にある` : ""}この神社は${benefits ? `${benefits}で知られ、` : ""}福岡の歴史を感じられる場所です。心静かに参拝できます。`
+        return `${orderWords[index] || "最後に"}、${name}${distanceInfo}へ足を向けてみませんか。${address ? `${address}にある` : ""}この神社は${benefits ? `${benefits}で知られ、` : ""}福岡の歴史を感じられる場所です。`
       })
       .join("\n\n")
 
-    const response = `福岡の神社巡りはいかがでしょうか？
-
-${userMessage.includes("観光") ? "福岡市内の魅力的な神社を巡る" : "あなたのお願いにぴったりの"}特別なコースをご提案させていただきますね。
-
-${shrineDescriptions}
-
-このコースなら、福岡の歴史と文化を肌で感じながら、心願成就への道のりを歩むことができます。地下鉄やバスを使えば効率よく回れますし、各神社の周辺には美味しいグルメスポットもありますよ。
-
-参拝の際は、手水舎でのお清めを忘れずに。そして、それぞれの神社の御朱印をいただくのも素敵な思い出になります。
-
-他にも福岡の隠れた名所や、おすすめの参拝ルートがございましたら、お気軽にお尋ねください！`
+    const response = `福岡市で神社めぐりをしながら観光地へとご案内いたします！\n\n${userMessage.includes("観光") ? "福岡市内の魅力的な神社と観光地を巡る" : "あなたのお願いにぴったりの"}特別なコースをご提案させていただきますね。\n\n${spotDescriptions}\n\nこのコースなら、福岡の歴史と文化を肌で感じながら、心願成就への道のりを歩むことができます。地下鉄やバスを使えば効率よく回れますし、各スポットの周辺には美味しいグルメや見どころもたくさんありますよ。\n\n他にも福岡の隠れた名所や、おすすめの観光ルートがございましたら、お気軽にお尋ねください！`
 
     return NextResponse.json({ content: response })
   } catch (error) {

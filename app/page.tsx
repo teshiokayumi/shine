@@ -111,10 +111,7 @@ export default function HomePage() {
         <div className="text-center mb-12">
           <h2 className="text-4xl font-bold text-gray-900 mb-8">福岡三社参拝</h2>
           <div className="space-y-4 text-gray-700 text-lg leading-relaxed max-w-3xl mx-auto">
-            <p>AIがあなたの願いに寄り添い、福岡の伝統「三社詣り」へと優しく導きます。</p>
-            <p>恋愛成就や仕事運、縁結びなど、叶えたい想いをそっとコンシェルジュに伝えてください。</p>
-            <p>時間に余裕があれば、旅の合間に訪れたい観光スポットも聞かせてください。</p>
-            <p>福岡三社詣りアプリが、あなたの心を癒やす特別な福岡ヒーリングツアーを思いつきサポートします。</p>
+            <p>福岡市で神社めぐりをしながら観光地へとご案内するコンシェルジュです。</p>
           </div>
         </div>
 
