@@ -64,7 +64,7 @@ async function importCourseData() {
     for (const spot of spotsData) {
       const { error } = await supabase.from("spots").upsert(
         {
-          spotid: spot.spotid,
+          spotid: spot.spotid || spot.spotID, // 両方拾えるように
           shrine_name: spot.shrine_name,
           address: spot.address,
           benefit_tag_1: spot.benefit_tag_1,
