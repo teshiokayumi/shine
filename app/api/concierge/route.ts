@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         ok: true,
-        content: finalMessage,
+        message: finalMessage,
         shrine_name: null,
         plans: [],
       })
@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      content: finalMessage,
+      message: finalMessage,
       shrine_name: shrine_name || null,
       plans,
     })
@@ -201,7 +201,7 @@ export async function POST(req: NextRequest) {
     console.error("[concierge] fatal:", err?.message || err)
     return NextResponse.json({
       ok: false,
-      content: "AIコンシェルジュが応答していません。しばらくしてからもう一度お試しください。",
+      message: "AIコンシェルジュが応答していません。しばらくしてからもう一度お試しください。",
       shrine_name: null,
       plans: [],
       error: "server-failed",
