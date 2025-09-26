@@ -127,75 +127,27 @@ export default function ConciergePage() {
     try {
       console.log("[v0] AI応答生成開始:", userMessage)
 
-      // 神社データベースから関連する神社を検索
-      const relevantShrines = findRelevantShrines(userMessage)
-      console.log("[v0] 関連神社数:", relevantShrines.length)
-
-      // AIプロンプトを構築
-      const systemPrompt = `
-あなたは福岡三社詣りの専門コンシェルジュです。以下の神社データベースを参考に、ユーザーの願い事や質問に対して適切な神社を推薦してください。
-
-神社データベース:
-${shrines
-  .map(
-    (shrine) => `
-- ${shrine.name}（${shrine.name_kana}）
-  住所: ${shrine.address}
-  御祭神: ${shrine.main_deity}
-  御利益: ${shrine.benefits?.join(", ")}
-  説明: ${shrine.description}
-`,
-  )
-  .join("\n")}
-
-回答の際は以下を心がけてください：
-- 親しみやすく丁寧な口調で回答する
-- 具体的な神社名と御利益を含める
-- 三社詣りの場合は3つの神社を推薦する
-- 各神社の特徴や歴史も簡潔に説明する
-- 福岡市内の神社のみを推薦する（太宰府は含めない）
-`
-
-      console.log("[v0] API呼び出し開始")
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMessage },
-          ],
+          messages: [{ role: "user", content: userMessage }],
         }),
       })
 
-      console.log("[v0] API応答ステータス:", response.status)
-      console.log("[v0] API応答OK:", response.ok)
-
       if (!response.ok) {
-        const errorText = await response.text()
-        console.log("[v0] API応答エラー:", errorText)
-        console.log("[v0] フォールバック機能に切り替え")
-        return await generateKeywordResponse(userMessage)
+        throw new Error(`Gemini API error: ${response.status}`)
       }
 
       const data = await response.json()
       console.log("[v0] API応答データ:", data)
 
-      const aiResponse = data.content || data.message || data.response || data.text
-
-      if (aiResponse) {
-        console.log("[v0] AI応答成功:", aiResponse.substring(0, 100) + "...")
-        return aiResponse
-      } else {
-        console.log("[v0] AI応答が空、フォールバックに切り替え")
-        return await generateKeywordResponse(userMessage)
-      }
-    } catch (error) {
-      console.error("[v0] AI応答生成エラー:", error)
-      console.log("[v0] フォールバック機能に切り替え")
-      return await generateKeywordResponse(userMessage)
+      return data.reply || data.content || data.message || data.response || data.text || "ただいま神様が留守のようです…"
+    } catch (err) {
+      console.error("[v0] AI応答生成エラー:", err)
+      return "AIコンシェルジュが応答していません。しばらくしてからもう一度お試しください。"
     }
   }
 
