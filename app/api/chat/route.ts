@@ -139,6 +139,31 @@ export async function POST(request: NextRequest) {
 
     const { data: courseSpotsData } = await supabase.from("course_spots").select("course_id, spot_id, order")
 
+    const mentionedSpots = (spotsData || []).filter(
+      (spot) =>
+        userMessage.includes(spot.shrine_name) ||
+        userMessage.includes(spot.address?.split("区")[0] + "区") ||
+        (spot.other_benefits && userMessage.includes(spot.other_benefits.substring(0, 10))),
+    )
+
+    let relevantCourses = []
+    if (mentionedSpots.length > 0) {
+      const mentionedSpotIds = mentionedSpots.map((spot) => spot.spotid)
+      const relatedCourseIds = (courseSpotsData || [])
+        .filter((cs) => mentionedSpotIds.includes(cs.spot_id))
+        .map((cs) => cs.course_id)
+
+      relevantCourses = (coursesData || []).filter((course) => relatedCourseIds.includes(course.course_id))
+    } else {
+      relevantCourses = (coursesData || []).filter(
+        (course) =>
+          userMessage.includes(course.theme) ||
+          userMessage.includes(course.name) ||
+          course.theme?.includes("神社") ||
+          course.theme?.includes("観光"),
+      )
+    }
+
     const allowedShrines = [
       { name: "櫛田神社", district: "博多区" },
       { name: "警固神社", district: "中央区" },
@@ -158,14 +183,6 @@ export async function POST(request: NextRequest) {
 
     try {
       const nearbyShines = await optimizeRouteWithSpots(shrineSpots, userLocation)
-
-      const relevantCourses = (coursesData || []).filter(
-        (course) =>
-          userMessage.includes(course.theme) ||
-          userMessage.includes(course.name) ||
-          course.theme?.includes("神社") ||
-          course.theme?.includes("観光"),
-      )
 
       const shrineJsonData = nearbyShines.map((spot) => ({
         name: spot.shrine_name || "名称不明",
@@ -229,13 +246,15 @@ ${userLocation ? `ユーザーの希望エリア: ${userLocation}` : ""}
 【重要な指針】
 1. 本日は博多区櫛田神社、中央区警固神社、中央区光雲神社、博多区住吉神社の4社のみを案内する
 2. これら以外の神社は絶対に紹介しない
-3. 「大濠公園から光雲神社へ行き、黒田家の繁栄を感じて警固公園へ行かれませんか？」のような自然で魅力的な提案をする
-4. 緯度経度データを活用して地理的に効率的なルートを提案する
-5. 神社だけでなく、周辺の観光地も組み合わせた総合的な福岡観光プランを提案する
-6. 移動手段（徒歩、地下鉄、バス）と所要時間も含める
-7. 福岡の歴史や文化的背景を織り交ぜた親しみやすい表現を使う
-8. データにない情報は推測せず、実際のデータのみを使用する
-9. ユーザーの質問内容に応じて、願い事だけでなく観光、グルメ、歴史など幅広く対応する
+3. 神社や観光スポットを問いかけられたら、そのスポット近くのツアー（おすすめコース）を参照して答える
+4. 複数のコースがある場合は「いくつかプランがございます」と伝え、各コースのdescriptionを紹介する
+5. 対応する神社がない場合は「この近くにはございませんので、他のところはいかがでしょう」と返答する
+6. 返答では必ずshrine_nameフィールドの値を使用して神社名を表示する
+7. 緯度経度データを活用して地理的に効率的なルートを提案する
+8. 神社だけでなく、周辺の観光地も組み合わせた総合的な福岡観光プランを提案する
+9. 移動手段（徒歩、地下鉄、バス）と所要時間も含める
+10. 福岡の歴史や文化的背景を織り交ぜた親しみやすい表現を使う
+11. データにない情報は推測せず、実際のデータのみを使用する
 
 地理的に最適化されたルートで、神社めぐりと観光を組み合わせた特別な福岡体験を提案してください。`,
                   },
@@ -272,6 +291,23 @@ ${userLocation ? `ユーザーの希望エリア: ${userLocation}` : ""}
 
     console.log("[v0] Using enhanced fallback response")
     const userMessageLower = userMessage.toLowerCase()
+
+    if (mentionedSpots.length > 0) {
+      if (relevantCourses.length > 1) {
+        const courseDescriptions = relevantCourses.map((course) => `・${course.name}: ${course.description}`).join("\n")
+
+        const response = `いくつかプランがございます！\n\n${courseDescriptions}\n\nどちらのプランがお気に入りでしょうか？詳しくご案内いたします。`
+        return NextResponse.json({ content: response })
+      } else if (relevantCourses.length === 1) {
+        const course = relevantCourses[0]
+        const response = `${course.name}のプランをご案内いたします！\n\n${course.description}\n\nこちらのコースはいかがでしょうか？`
+        return NextResponse.json({ content: response })
+      } else {
+        const response = `この近くにはございませんので、他のところはいかがでしょう？\n\n本日は博多区の櫛田神社、中央区の警固神社、中央区の光雲神社、博多区の住吉神社をご案内できます。`
+        return NextResponse.json({ content: response })
+      }
+    }
+
     let recommendedSpots = []
 
     if (userMessageLower.includes("恋愛") || userMessageLower.includes("結婚") || userMessageLower.includes("縁結び")) {
