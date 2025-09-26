@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Send, Loader2 } from "lucide-react"
-import { createClient } from "@/lib/supabase"
 
 interface Message {
   id: number
@@ -16,16 +15,35 @@ interface Message {
   timestamp: Date
 }
 
-interface Shrine {
-  id: number
-  name: string
-  name_kana: string
-  description: string
-  address: string
-  latitude: number
-  longitude: number
-  main_deity: string
-  benefits: string[]
+async function askConcierge(input: { query?: string; shrine_name?: string }) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 15000) // 15秒でタイムアウト
+  try {
+    const res = await fetch("/api/concierge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      signal: ctrl.signal,
+    })
+    clearTimeout(t)
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data) throw new Error("bad response")
+    // 必ず message を画面に出す（沈黙回避）
+    return data as {
+      ok: boolean
+      message: string
+      shrine_name: string | null
+      plans: Array<{ name: string; description: string; course_id: string; theme?: string }>
+    }
+  } catch (e) {
+    clearTimeout(t)
+    return {
+      ok: false,
+      message: "AIコンシェルジュが応答していません。ネットワーク状況をご確認ください。",
+      shrine_name: null,
+      plans: [],
+    }
+  }
 }
 
 export default function ConciergePage() {
@@ -33,20 +51,7 @@ export default function ConciergePage() {
   const [inputText, setInputText] = useState("")
   const [loading, setLoading] = useState(false)
   const [audioPlayed, setAudioPlayed] = useState(false)
-  const [shrines, setShrines] = useState<Shrine[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    async function fetchShrines() {
-      const supabase = createClient()
-      const { data, error } = await supabase.from("shrines").select("*")
-
-      if (data && !error) {
-        setShrines(data)
-      }
-    }
-    fetchShrines()
-  }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -95,15 +100,25 @@ export default function ConciergePage() {
     }
 
     setMessages((prev) => [...prev, userMessage])
+    const currentInput = inputText
     setInputText("")
     setLoading(true)
 
     try {
-      const response = await generateAIResponse(inputText)
+      const response = await askConcierge({ query: currentInput })
+
+      // プランがある場合は詳細情報も含める
+      let responseText = response.message
+      if (response.plans && response.plans.length > 0) {
+        responseText += "\n\n【おすすめプラン】\n"
+        response.plans.forEach((plan, index) => {
+          responseText += `${index + 1}. ${plan.name}\n${plan.description}\n\n`
+        })
+      }
 
       const botMessage: Message = {
         id: Date.now() + 1,
-        text: response,
+        text: responseText,
         isUser: false,
         timestamp: new Date(),
       }
@@ -121,127 +136,6 @@ export default function ConciergePage() {
     } finally {
       setLoading(false)
     }
-  }
-
-  const generateAIResponse = async (userMessage: string): Promise<string> => {
-    try {
-      console.log("[v0] AI応答生成開始:", userMessage)
-
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: userMessage }],
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`Gemini API error: ${response.status}`)
-      }
-
-      const data = await response.json()
-      console.log("[v0] API応答データ:", data)
-
-      return data.reply || data.content || data.message || data.response || data.text || "ただいま神様が留守のようです…"
-    } catch (err) {
-      console.error("[v0] AI応答生成エラー:", err)
-      return "AIコンシェルジュが応答していません。しばらくしてからもう一度お試しください。"
-    }
-  }
-
-  const findRelevantShrines = (message: string): Shrine[] => {
-    const keywords = message.toLowerCase()
-    return shrines.filter((shrine) => {
-      const searchText = `${shrine.name} ${shrine.description} ${shrine.benefits?.join(" ")}`.toLowerCase()
-      return keywords.split(" ").some((keyword) => searchText.includes(keyword))
-    })
-  }
-
-  const generateKeywordResponse = async (userInput: string): Promise<string> => {
-    const supabase = createClient()
-    const keywords = userInput.toLowerCase()
-
-    // 恋愛・縁結び関連
-    if (
-      keywords.includes("恋愛") ||
-      keywords.includes("縁結び") ||
-      keywords.includes("結婚") ||
-      keywords.includes("出会い")
-    ) {
-      const { data } = await supabase.from("shrines").select("*").or("benefits.cs.{縁結び,恋愛成就}").limit(3)
-
-      if (data && data.length > 0) {
-        const shrineList = data.map((shrine) => `・${shrine.name}（${shrine.benefits?.join("、")}）`).join("\n")
-        return `恋愛・縁結びのご利益がある神社をご紹介いたします。\n\n${shrineList}\n\nこれらの神社での三社詣りはいかがでしょうか？詳しい情報やルートをお知りになりたい場合は、お申し付けください。`
-      }
-    }
-
-    // 仕事・商売関連
-    if (
-      keywords.includes("仕事") ||
-      keywords.includes("商売") ||
-      keywords.includes("成功") ||
-      keywords.includes("昇進")
-    ) {
-      const { data } = await supabase.from("shrines").select("*").or("benefits.cs.{商売繁盛,仕事運向上}").limit(3)
-
-      if (data && data.length > 0) {
-        const shrineList = data.map((shrine) => `・${shrine.name}（${shrine.benefits?.join("、")}）`).join("\n")
-        return `仕事運・商売繁盛のご利益がある神社をご紹介いたします。\n\n${shrineList}\n\nこれらの神社での三社詣りで、お仕事の成功をお祈りしてはいかがでしょうか？`
-      }
-    }
-
-    // 学業・合格関連
-    if (
-      keywords.includes("学業") ||
-      keywords.includes("合格") ||
-      keywords.includes("試験") ||
-      keywords.includes("勉強")
-    ) {
-      const { data } = await supabase.from("shrines").select("*").or("benefits.cs.{学業成就,合格祈願}").limit(3)
-
-      if (data && data.length > 0) {
-        const shrineList = data.map((shrine) => `・${shrine.name}（${shrine.benefits?.join("、")}）`).join("\n")
-        return `学業成就・合格祈願のご利益がある神社をご紹介いたします。\n\n${shrineList}\n\n受験や資格試験の成功をお祈りする三社詣りコースをご提案いたします。`
-      }
-    }
-
-    // 健康関連
-    if (keywords.includes("健康") || keywords.includes("病気") || keywords.includes("回復")) {
-      const { data } = await supabase.from("shrines").select("*").or("benefits.cs.{健康祈願,病気平癒}").limit(3)
-
-      if (data && data.length > 0) {
-        const shrineList = data.map((shrine) => `・${shrine.name}（${shrine.benefits?.join("、")}）`).join("\n")
-        return `健康祈願のご利益がある神社をご紹介いたします。\n\n${shrineList}\n\nご健康をお祈りする三社詣りコースはいかがでしょうか？`
-      }
-    }
-
-    // エリア指定
-    if (keywords.includes("天神") || keywords.includes("博多") || keywords.includes("中洲")) {
-      const { data } = await supabase
-        .from("shrines")
-        .select("*")
-        .ilike("address", `%${keywords.includes("天神") ? "天神" : keywords.includes("博多") ? "博多" : "中洲"}%`)
-        .limit(3)
-
-      if (data && data.length > 0) {
-        const shrineList = data.map((shrine) => `・${shrine.name}（${shrine.address}）`).join("\n")
-        const area = keywords.includes("天神") ? "天神" : keywords.includes("博多") ? "博多" : "中洲"
-        return `${area}エリアの神社をご紹介いたします。\n\n${shrineList}\n\nこのエリアでの三社詣りコースをご提案いたします。観光と合わせてお楽しみいただけます。`
-      }
-    }
-
-    // 一般的な回答
-    const { data } = await supabase.from("shrines").select("*").limit(3)
-
-    if (data && data.length > 0) {
-      const shrineList = data.map((shrine) => `・${shrine.name}（${shrine.benefits?.join("、")}）`).join("\n")
-      return `福岡市内の人気の神社をご紹介いたします。\n\n${shrineList}\n\nご希望に合わせて、より詳しい三社詣りコースをご提案いたします。どのようなご利益をお求めでしょうか？`
-    }
-
-    return "申し訳ございません。現在、神社の情報を取得できません。しばらく経ってから再度お試しください。"
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
